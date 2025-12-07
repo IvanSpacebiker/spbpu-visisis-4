@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>Jira Analytics Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f7fa;
+            padding: 20px;
+            margin: 0;
+        }
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 30px;
+        }
+        .chart-container {
+            width: 95%;
+            max-width: 1100px;
+            height: 450px;
+            margin: 25px auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            padding: 15px;
+        }
+        .status-chart {
+            height: 350px !important;
+        }
+    </style>
+</head>
+<body>
+
+<h1>Analytics for Project: <span th:text="${projectKey}"></span></h1>
+
+<!-- График 1: Время до закрытия -->
+<div class="chart-container">
+    <canvas id="chart1"></canvas>
+</div>
+
+<!-- График 2: Время в статусах (динамически) -->
+<div id="statusCharts"></div>
+
+<!-- График 3: Ежедневная статистика -->
+<div class="chart-container">
+    <canvas id="chart3"></canvas>
+</div>
+
+<!-- График 4: Топ-30 пользователей -->
+<div class="chart-container">
+    <canvas id="chart4"></canvas>
+</div>
+
+<!-- График 5: Время до закрытия (топ-assignee) -->
+<div class="chart-container">
+    <canvas id="chart5"></canvas>
+</div>
+
+<!-- График 6: По priority -->
+<div class="chart-container">
+    <canvas id="chart6"></canvas>
+</div>
+
+<script th:inline="javascript">
+    /*<![CDATA[*/
+
+    // Утилита: сортировка по числу или строке
+    function smartSort(items, key) {
+        return [...items].sort((a, b) => {
+            const aVal = a[key], bVal = b[key];
+            const aNum = parseFloat(aVal), bNum = parseFloat(bVal);
+            if (!isNaN(aNum) && !isNaN(bNum)) {
+                return aNum - bNum;
+            }
+            return String(aVal).localeCompare(String(bVal));
+        });
+    }
+
+    // Утилита: рендер bar chart
+    function renderBarChart(canvasId, bins, title, xlabel) {
+        if (!bins || bins.length === 0) return;
+
+        const sorted = smartSort(bins, 'bin');
+        const config = {
+            type: 'bar',
+            data: {
+                labels: sorted.map(b => b.bin),
+                datasets: [{
+                    label: 'Number of Issues',
+                    data: sorted.map(b => b.count),
+                    backgroundColor: 'rgba(54, 162, 235, 0.7)',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: title,
+                        font: { size: 16 }
+                    },
+                    legend: { display: true }
+                },
+                scales: {
+                    x: {
+                        title: { display: true, text: xlabel }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Count' },
+                        ticks: { precision: 0 }
+                    }
+                }
+            }
+        };
+        new Chart(document.getElementById(canvasId).getContext('2d'), config);
+    }
+
+    // === График 1 ===
+    renderBarChart('chart1', /*[[${timeToCloseData}]]*/ [], 'Time to Close (All Issues)', 'Days');
+
+    // === График 2: Статусы ===
+    const statusTimeData = /*[[${statusTimeData}]]*/ {};
+    const statusContainer = document.getElementById('statusCharts');
+    for (const [status, bins] of Object.entries(statusTimeData)) {
+        if (!bins || bins.length === 0) continue;
+
+        const div = document.createElement('div');
+        div.className = 'chart-container status-chart';
+        const canvas = document.createElement('canvas');
+        canvas.id = 'status-' + status.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '');
+        div.innerHTML = `<h3 style="text-align:center;margin-top:0;">Time in Status: ${status}</h3>`;
+        div.appendChild(canvas);
+        statusContainer.appendChild(div);
+
+        renderBarChart(canvas.id, bins, '', 'Days in Status');
+    }
+
+    // === График 3: Ежедневная статистика ===
+    const dailyStats = /*[[${dailyStats}]]*/ [];
+    if (dailyStats && dailyStats.length > 0) {
+        const labels = dailyStats.map(s => s.date);
+        const config = {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Created Today',
+                        data: dailyStats.map(s => s.created),
+                        borderColor: '#2ecc71',
+                        backgroundColor: 'rgba(46, 204, 113, 0.1)',
+                        fill: false,
+                        tension: 0.2
+                    },
+                    {
+                        label: 'Resolved Today',
+                        data: dailyStats.map(s => s.resolved),
+                        borderColor: '#e74c3c',
+                        backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                        fill: false,
+                        tension: 0.2
+                    },
+                    {
+                        label: 'Cumulative Created',
+                        data: dailyStats.map(s => s.cumulativeCreated),
+                        borderColor: '#27ae60',
+                        borderDash: [5, 5],
+                        fill: false,
+                        tension: 0.2
+                    },
+                    {
+                        label: 'Cumulative Resolved',
+                        data: dailyStats.map(s => s.cumulativeResolved),
+                        borderColor: '#c0392b',
+                        borderDash: [5, 5],
+                        fill: false,
+                        tension: 0.2
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Daily Task Statistics (Created vs Resolved)',
+                        font: { size: 16 }
+                    }
+                },
+                scales: {
+                    x: {
+                        title: { display: true, text: 'Date' }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Number of Issues' },
+                        ticks: { precision: 0 }
+                    }
+                }
+            }
+        };
+        new Chart(document.getElementById('chart3').getContext('2d'), config);
+    }
+
+    // === График 4: Топ-30 пользователей ===
+    const topUsers = /*[[${topUsers}]]*/ [];
+    if (topUsers && topUsers.length > 0) {
+        // Сортируем по убыванию
+        const sortedUsers = [...topUsers].sort((a, b) => b.count - a.count);
+        const config = {
+            type: 'bar',
+            data: {
+                labels: sortedUsers.map(u => u.user),
+                datasets: [{
+                    label: 'Total Tasks (Reporter + Assignee)',
+                    data: sortedUsers.map(u => u.count),
+                    backgroundColor: 'rgba(155, 89, 182, 0.7)'
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Top 30 Users by Task Count',
+                        font: { size: 16 }
+                    }
+                },
+                scales: {
+                    x: {
+                        title: { display: true, text: 'Number of Tasks' },
+                        ticks: { precision: 0 }
+                    },
+                    y: {
+                        ticks: { autoSkip: false, maxRotation: 0, minRotation: 0 }
+                    }
+                }
+            }
+        };
+        new Chart(document.getElementById('chart4').getContext('2d'), config);
+    }
+
+    // === График 5 ===
+    renderBarChart('chart5', /*[[${assignedTimeData}]]*/ [], 'Time in Progress', 'Days');
+
+    // === График 6: Priority ===
+    renderBarChart('chart6', /*[[${priorityData}]]*/ [], 'Issues by Priority', 'Priority');
+
+    /*]]>*/
+</script>
+
+</body>
+</html>
